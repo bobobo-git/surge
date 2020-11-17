@@ -4,7 +4,6 @@
 
 #include "HeadlessUtils.h"
 #include "Player.h"
-#include "Stress.h"
 #include "SurgeError.h"
 
 #include "Tunings.h"
@@ -16,7 +15,7 @@ void statsFromPlayingEveryPatch()
    ** and a scale then asking headless to map it onto every patch
    ** and call us back with a result
    */
-   SurgeSynthesizer* surge = Surge::Headless::createSurge(44100);
+   auto surge = Surge::Headless::createSurge(44100);
 
    Surge::Headless::playerEvents_t scale =
        Surge::Headless::make120BPMCMajorQuarterNoteScale(0, 44100);
@@ -57,13 +56,12 @@ void statsFromPlayingEveryPatch()
    };
 
    Surge::Headless::playOnEveryPatch(surge, scale, callBack);
-   delete surge;
 }
 
 
 void playSomeBach()
 { 
-   SurgeSynthesizer* surge = Surge::Headless::createSurge(44100);
+   auto surge = Surge::Headless::createSurge(44100);
 
    std::string tmpdir = "/tmp";
    std::string fname = tmpdir + "/988-v05.mid";
@@ -72,7 +70,7 @@ void playSomeBach()
    if (!tf)
    {
       std::string cmd = "curl -o " + fname + " http://www.jsbach.net/midi/bwv988/988-v05.mid";
-      system(cmd.c_str()); 
+      auto res = system(cmd.c_str()); 
    }
    else
       fclose(tf);
@@ -98,10 +96,15 @@ void playSomeBach()
 */
 int main(int argc, char** argv)
 {
+#define RUN_REGTEST 1
+#if RUN_REGTEST
+   std::cout << "\n\n"
+             << "surge-headless is our regtest engine for the synth engine excluding the UI\n"
+             << "Run 'surge-headless --help' for options.\n\n";
    extern int runAllTests(int, char**);
    return runAllTests(argc, argv);
 
-#if 0
+#else
    std::cout << "Hi! HEADLESS is a development tool the SurgeDevs use to run parts of the synth\n"
               << "without a UI or a DAW. It explicitly is NOT a standalone version of surge or a\n"
               << "user targeted application. If you are running it and are not a dev you will\n"
@@ -109,11 +112,10 @@ int main(int argc, char** argv)
    try 
    {
       // simpleOscillatorToStdOut();
-      //statsFromPlayingEveryPatch();
+      statsFromPlayingEveryPatch();
       //playSomeBach();
       //Surge::Headless::createAndDestroyWithScaleAndRandomPatch(20000);
       // Surge::Headless::pullInitSamplesWithNoNotes(1000);
-      testTuning();
       //portableWt();
    }
    catch( Surge::Error &e )

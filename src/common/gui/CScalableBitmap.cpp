@@ -1,6 +1,8 @@
+#include "globals.h"
 #include "CScalableBitmap.h"
 #include "SurgeError.h"
 #include "UserInteractions.h"
+#include "UIInstrumentation.h"
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -15,6 +17,7 @@
 #if WINDOWS
 #include "vstgui/lib/platform/iplatformresourceinputstream.h"
 #endif
+#include <unordered_map>
 
 #include <cmath>
 
@@ -23,6 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <DebugHelpers.h>
 /*
 ** CScalableBitmap is the only file which uses the SVG Implementatoin so it is also the one
 ** and only one which ejexts the link symbols.
@@ -31,6 +35,7 @@
 #include "nanosvg.h"
 
 using namespace VSTGUI;
+std::atomic<int> CScalableBitmap::instances( 0 );
 
 #if MAC
 static const std::string svgFullFileNameFromBundle(const std::string& filename)
@@ -41,15 +46,19 @@ static const std::string svgFullFileNameFromBundle(const std::string& filename)
    if (url)
    {
       CFStringRef urlStr = CFURLGetString(url);
-      // std::cout << "URLString = " << urlStr << std::flush << std::endl;
+      CFRetain( urlStr ); // "GET" rule https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFMemoryMgmt/Concepts/Ownership.html#//apple_ref/doc/uid/20001148-SW1
       const char* csp = CFStringGetCStringPtr(urlStr, kCFStringEncodingUTF8);
       if (csp)
       {
-         std::string resPath(CFStringGetCStringPtr(CFURLGetString(url), kCFStringEncodingUTF8));
+         std::string resPath(csp);
          if (resPath.find("file://") != std::string::npos)
             resPath = resPath.substr(7);
+         CFRelease( urlStr );
+         CFRelease( url );
          return resPath;
       }
+      CFRelease( urlStr );
+      CFRelease( url );
    }
 
    return "";
@@ -71,17 +80,35 @@ static const struct MemorySVG* findMemorySVG(const std::string& filename)
 #if WINDOWS
 static int svgContentsFromRCFile(int id, char* svgData, int maxSz)
 {
-   VSTGUI::IPlatformResourceInputStream::Ptr istr =
-       VSTGUI::IPlatformResourceInputStream::create(CResourceDescription(id));
-
-   if (istr == NULL)
+#ifdef INSTRUMENT_UI
+   Surge::Debug::record( "svgContentsFromRCFile::GET" );
+#endif   
+   static std::unordered_map<int, char*> leakyStore;
+   if( leakyStore.find(id) == leakyStore.end() )
    {
-      return -1;
+#ifdef INSTRUMENT_UI
+      Surge::Debug::record( "svgContentsFromRCFile::READ" );
+#endif   
+
+      VSTGUI::IPlatformResourceInputStream::Ptr istr =
+          VSTGUI::IPlatformResourceInputStream::create(CResourceDescription(id));
+
+      if (istr == NULL)
+      {
+         return -1;
+      }
+
+      size_t sz = 1024 * 1024;
+      char *leakThis = new char[sz];
+      memset( leakThis, 0, sz );
+      uint32_t readSize = istr->readRaw(leakThis, sz);
+      leakThis[readSize] = 0;
+      leakyStore[id] = leakThis;
    }
-   memset(svgData, 0, maxSz);
-   uint32_t readSize = istr->readRaw(svgData, maxSz);
-   svgData[readSize] = 0;
-   return readSize;
+   
+   memcpy(svgData, leakyStore[id], maxSz);
+  
+   return 1;
 }
 #endif
 
@@ -95,10 +122,17 @@ void CScalableBitmap::setPhysicalZoomFactor(int zoomFactor)
 CScalableBitmap::CScalableBitmap(CResourceDescription desc, VSTGUI::CFrame* f)
     : CBitmap(desc), svgImage(nullptr), frame(f)
 {
+#ifdef INSTRUMENT_UI   
+    Surge::Debug::record( "CScalableBitmap::CScalableBitmap desc" );
+#endif
+
     int id = 0;
     if(desc.type == CResourceDescription::kIntegerType)
         id = (int32_t)desc.u.id;
 
+    instances++;
+    //std::cout << "  Construct CScalableBitmap. instances=" << instances << " id=" << id << std::endl;
+    
     resourceID = id;
 
     std::stringstream filename;
@@ -167,12 +201,69 @@ CScalableBitmap::CScalableBitmap(CResourceDescription desc, VSTGUI::CFrame* f)
     lastSeenZoom = -1;
 }
 
-#define DUMPR(r)                                                                                   \
-   "(x=" << r.getTopLeft().x << ",y=" << r.getTopLeft().y << ")+(w=" << r.getWidth()               \
-         << ",h=" << r.getHeight() << ")"
+CScalableBitmap::CScalableBitmap(std::string ifname, VSTGUI::CFrame* f)
+   : CBitmap(CResourceDescription(0)), svgImage(nullptr), frame(f)
+{
+#ifdef INSTRUMENT_UI   
+    Surge::Debug::record( "CScalableBitmap::CScalableBitmap file" );
+#endif
+
+    // OK so we have to see what type of file we are
+    fname = ifname;
+    instances++;
+    resourceID = -1;
+    
+    std::string extension = "svg";
+    if( fname.length() > 3 )
+       extension = fname.substr( fname.length() - 3 );
+
+    if( _stricmp( extension.c_str(), "svg" ) == 0 )
+    {
+       svgImage = nsvgParseFromFile(fname.c_str(), "px", 96);
+       
+       if (!svgImage)
+       {
+          std::cout << "Unable to load SVG Image " << fname << std::endl;
+       }
+    }
+
+    if( _stricmp( extension.c_str(), "png" ) == 0 )
+    {
+       pngZooms[100] = std::make_unique<VSTGUI::CBitmap>(fname.c_str());
+    }
+    
+    extraScaleFactor = 100;
+    currentPhysicalZoomFactor = 100;
+    lastSeenZoom = -1;
+}
+
+CScalableBitmap::~CScalableBitmap()
+{
+#ifdef INSTRUMENT_UI
+   Surge::Debug::record( "CScalableBitmap::~CScalableBitmap" );
+#endif   
+   
+   for (auto const& pair : offscreenCache)
+   {
+      auto val = pair.second;
+      if (val)
+         val->forget();
+   }
+   offscreenCache.clear();
+
+   if( svgImage )
+   {
+      nsvgDelete( svgImage );
+   }
+   instances--;
+   //std::cout << "  Destroy CScalableBitmap. instances=" << instances << " id=" << resourceID << " fn=" << fname << std::endl;
+}
 
 void CScalableBitmap::draw (CDrawContext* context, const CRect& rect, const CPoint& offset, float alpha )
 {
+#ifdef INSTRUMENT_UI   
+    Surge::Debug::record( "CScalableBitmap::draw" );
+#endif
     /*
     ** CViewContainer, in the ::drawRect method, no matter what invalidates, calls a drawBackground
     ** on the entire background with a clip rectangle applied. This is not normally a problem when
@@ -204,7 +295,7 @@ void CScalableBitmap::draw (CDrawContext* context, const CRect& rect, const CPoi
        return;
     }
 
-    if (svgImage)
+    if (svgImage || (pngZooms.find(100) != pngZooms.end() ) )
     {
        /*
        ** Plan of attack here is to use coffscreencontext into a physicalzoomfactor scaled version
@@ -224,6 +315,7 @@ void CScalableBitmap::draw (CDrawContext* context, const CRect& rect, const CPoi
           offscreenCache.clear();
           lastSeenZoom = currentPhysicalZoomFactor;
        }
+       
 
        CGraphicsTransform tf = CGraphicsTransform().scale(lastSeenZoom / 100.0, lastSeenZoom / 100.0);
        
@@ -240,6 +332,9 @@ void CScalableBitmap::draw (CDrawContext* context, const CRect& rect, const CPoi
 
        if (offscreenCache.find(offset) == offscreenCache.end())
        {
+#ifdef INSTRUMENT_UI   
+          Surge::Debug::record( "CScalableBitmap::draw::createOffscreenCache" );
+#endif
           VSTGUI::CPoint sz = rect.getSize();
           ixtf.transform(sz);
 
@@ -254,8 +349,37 @@ void CScalableBitmap::draw (CDrawContext* context, const CRect& rect, const CPoi
              CDrawContext::Transform trsf(*offscreen, tf);
              CDrawContext::Transform xtrsf(*offscreen, ixtf);
 
-             drawSVG(offscreen, newRect, offset, alpha);
+             if( svgImage )
+             {
+                drawSVG(offscreen, newRect, offset, alpha);
+             }
+             else
+             {
+                // OK so look through our zoom PNGs looking for the one above cpz
+                int zoomScan = 100;
 
+                for (auto &zl : pngZooms)
+                {
+                   zoomScan = zl.first;
+                   if (zoomScan >= currentPhysicalZoomFactor)
+                   {
+                      break;
+                   }
+                }
+                auto etf =
+                    VSTGUI::CGraphicsTransform()
+                        .scale(extraScaleFactor / 100.0, extraScaleFactor / 100.0);
+                VSTGUI::CDrawContext::Transform t1(*offscreen, etf);
+
+                auto ztf = VSTGUI::CGraphicsTransform()
+                           .scale( 100.0 / zoomScan, 100.0 / zoomScan );
+                VSTGUI::CDrawContext::Transform t2(*offscreen, ztf);
+
+                ztf.inverse().transform( newRect );
+                auto offs = offset;
+                ztf.inverse().transform( offs );
+                pngZooms[zoomScan]->draw(offscreen, newRect, offs, 1.0);
+             }
              offscreen->endDraw();
              CBitmap* tmp = offscreen->getBitmap();
              if (tmp)
@@ -399,24 +523,50 @@ void CScalableBitmap::drawSVG(CDrawContext* dc,
             NSVGgradient* ngrad = shape->fill.gradient;
 
             float* x = ngrad->xform;
-            VSTGUI::CGraphicsTransform gradXform(x[0], x[1], x[2], x[3], x[4], x[5]);
+            // This re-order is on purpose; vstgui and nanosvg use different order for diagonals
+            VSTGUI::CGraphicsTransform gradXform(x[0], x[2], x[1], x[3], x[4], x[5]);
             VSTGUI::CGradient::ColorStopMap csm;
             VSTGUI::CGradient* cg = VSTGUI::CGradient::create(csm);
 
             for (int i = 0; i < ngrad->nstops; ++i)
             {
                auto stop = ngrad->stops[i];
-               cg->addColorStop(stop.offset, svgColorToCColor(stop.color));
+               cg->addColorStop(stop.offset, svgColorToCColor(stop.color, shape->opacity));
             }
             VSTGUI::CPoint s0(0, 0), s1(0, 1);
             VSTGUI::CPoint p0 = gradXform.inverse().transform(s0);
             VSTGUI::CPoint p1 = gradXform.inverse().transform(s1);
-
+            
             dc->fillLinearGradient(gp, *cg, p0, p1, evenOdd);
+            cg->forget();
+         }
+         else if( shape->fill.type == NSVG_PAINT_RADIAL_GRADIENT)
+         {
+            bool evenOdd = (shape->fillRule == NSVGfillRule::NSVG_FILLRULE_EVENODD);
+            NSVGgradient* ngrad = shape->fill.gradient;
+
+            float* x = ngrad->xform;
+            // This re-order is on purpose; vstgui and nanosvg use different order for diagonals
+            VSTGUI::CGraphicsTransform gradXform(x[0], x[2], x[1], x[3], x[4], x[5]);
+            VSTGUI::CGradient::ColorStopMap csm;
+            VSTGUI::CGradient* cg = VSTGUI::CGradient::create(csm);
+
+            for( int i=0; i<ngrad->nstops; ++i )
+            {
+               auto stop = ngrad->stops[i];
+               cg->addColorStop(stop.offset, svgColorToCColor(stop.color, shape->opacity));
+            }
+
+            VSTGUI::CPoint s0(0, 0), s1(0.5,0); // the box has size -0.5, 0.5 so the radius is 0.5
+            VSTGUI::CPoint p0 = gradXform.inverse().transform(s0);
+            VSTGUI::CPoint p1 = gradXform.inverse().transform(s1);
+            dc->fillRadialGradient(gp, *cg, p0, p1.x, CPoint(0,0), evenOdd);
+            cg->forget();
+
          }
          else
          {
-            std::cerr << "No radial gradient support yet" << std::endl;
+            std::cerr << "Unknown Shape Fill Type" << std::endl;
             dc->setFillColor(VSTGUI::kRedCColor);
             dc->drawGraphicsPath(gp, VSTGUI::CDrawContext::kPathFilled);
          }
@@ -429,7 +579,7 @@ void CScalableBitmap::drawSVG(CDrawContext* dc,
       {
          if (shape->stroke.type == NSVG_PAINT_COLOR)
          {
-            dc->setFrameColor(svgColorToCColor(shape->stroke.color));
+            dc->setFrameColor(svgColorToCColor(shape->stroke.color, shape->opacity));
          }
          else
          {
@@ -457,4 +607,11 @@ VSTGUI::CColor CScalableBitmap::svgColorToCColor(int svgColor, float opacity)
    int g = (svgColor & 0x0000FF00) >> 8;
    int r = (svgColor & 0x000000FF);
    return VSTGUI::CColor(r, g, b, a);
+}
+
+void CScalableBitmap::addPNGForZoomLevel(std::string fname, int zoomLevel)
+{
+   auto p = std::make_unique<VSTGUI::CBitmap>(fname.c_str());
+   if( p )
+      pngZooms[zoomLevel] = std::move(p);
 }

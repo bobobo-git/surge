@@ -1,13 +1,30 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
+#include "SurgeGUIEditor.h"
 #include "CSurgeSlider.h"
 #include "resource.h"
 #include "DspUtilities.h"
 #include "MouseCursorControl.h"
 #include "CScalableBitmap.h"
 #include "SurgeBitmaps.h"
+#include "SurgeStorage.h"
+#include "SkinColors.h"
+#include <UserDefaults.h>
 #include <iostream>
+
 
 using namespace VSTGUI;
 using namespace std;
@@ -20,6 +37,8 @@ enum
    cs_drag = 1,
 };
 
+class SurgeStorage;
+
 CSurgeSlider::MoveRateState CSurgeSlider::sliderMoveRateState = kUnInitialized;
 
 CSurgeSlider::CSurgeSlider(const CPoint& loc,
@@ -27,14 +46,21 @@ CSurgeSlider::CSurgeSlider(const CPoint& loc,
                            IControlListener* listener,
                            long tag,
                            bool is_mod,
-                           std::shared_ptr<SurgeBitmaps> bitmapStore)
-    : CCursorHidingControl(CRect(loc, CPoint(1, 1)), listener, tag, 0)
+                           std::shared_ptr<SurgeBitmaps> bitmapStore,
+                           SurgeStorage* storage)
+    : CControl(CRect(loc, CPoint(1, 1)), listener, tag, 0), Surge::UI::CursorControlAdapterWithMouseDelta<CSurgeSlider>(storage)
 {
    this->style = stylee;
    this->is_mod = is_mod;
+   
+   this->storage = storage;
+
+   labfont = displayFont;
+   labfont->remember();
 
    modmode = 0;
    disabled = false;
+   deactivated = false;
 
    label[0] = 0;
    leftlabel[0] = 0;
@@ -61,9 +87,6 @@ CSurgeSlider::CSurgeSlider(const CPoint& loc,
 
    if (style & CSlider::kHorizontal)
    {
-      pTray = bitmapStore->getBitmap(IDB_FADERH_BG);
-      pHandle = bitmapStore->getBitmap(IDB_FADERH_HANDLE);
-
       if (style & kWhite)
          typehy = 1;
 
@@ -77,9 +100,6 @@ CSurgeSlider::CSurgeSlider(const CPoint& loc,
    {
       if (!(style & CSlider::kTop))
          style |= CSlider::kBottom; // CSlider::kBottom by default
-
-      pTray = bitmapStore->getBitmap(IDB_FADERV_BG);
-      pHandle = bitmapStore->getBitmap(IDB_FADERV_HANDLE);
 
       if (style & kWhite)
          typehy = 0;
@@ -107,7 +127,9 @@ void CSurgeSlider::setModValue(float val)
 }
 
 CSurgeSlider::~CSurgeSlider()
-{}
+{
+   labfont->forget();
+}
 
 void CSurgeSlider::setLabel(const char* txt)
 {
@@ -167,6 +189,19 @@ void CSurgeSlider::draw(CDrawContext* dc)
    if (has_modulation_current)
       typex = 2;
 
+   float slider_alpha = (disabled || deactivated) ? 0.35 : 1.0;
+   bool showHandle = true;
+#if LINUX
+   // linux transparency is a bit broken (i have it patched to ignored) as described in
+   // #2053. For now just disable handles on linux transparent sliders, which is a bummer
+   // but better than a mispaint, then come back to this after 1.7.0
+   if( disabled || deactivated )
+   {
+      showHandle = false;
+      slider_alpha = 1.0;
+   }
+#endif
+
    if (pTray)
    {
       // CRect trect(0,0,pTray->getWidth(),pTray->getHeight());
@@ -183,20 +218,12 @@ void CSurgeSlider::draw(CDrawContext* dc)
       else
          trect.offset(2, 2);
 
-      int alpha = 0xff;
-      if (disabled)
-      {
-         typex = 0;
-         alpha = 0x80;
-      }
 
       if (style & CSlider::kHorizontal)
-         pTray->draw(dc, trect, CPoint(133 * typex, 14 * typey), alpha);
+         pTray->draw(dc, trect, CPoint(133 * typex, 14 * typey), slider_alpha);
       else
-         pTray->draw(dc, trect, CPoint(16 * typex, 75 * typey), alpha);
+         pTray->draw(dc, trect, CPoint(16 * typex, 75 * typey), slider_alpha);
    }
-   if (disabled)
-      return;
 
    CRect headrect;
    if (style & CSlider::kHorizontal)
@@ -213,10 +240,10 @@ void CSurgeSlider::draw(CDrawContext* dc)
       // if (label_id >= 0) pLabels->draw(dc,trect,CPoint(0,8*label_id),0xff);
 
       if (style & kWhite)
-         dc->setFontColor(kWhiteCColor);
+         dc->setFontColor(skin->getColor(Colors::Slider::Label::Light));
       else
-         dc->setFontColor(kBlackCColor);
-      dc->setFont(displayFont);
+         dc->setFontColor(skin->getColor(Colors::Slider::Label::Dark));
+      dc->setFont(labfont);
 
       //		int a = 'a' + (rand()&31);
       //		label[1] = a;
@@ -226,80 +253,343 @@ void CSurgeSlider::draw(CDrawContext* dc)
          dc->drawString(leftlabel, trect, kLeftText, true);
    }
 
-   if (pHandle && (modmode != 2))
+   CRect hrect(headrect);
+   handle_rect = handle_rect_orig;
+   hrect.offset(size.left, size.top);
+   if (style & CSlider::kHorizontal)
+      hrect.offset(0, 3);
+   
+   float dispv = limit_range(qdvalue, 0.f, 1.f);
+   if (style & CSlider::kRight || style & CSlider::kBottom)
+      dispv = 1 - dispv;
+   dispv *= range;
+   
+   if (style & CSlider::kHorizontal)
    {
-      CRect hrect(headrect);
-      handle_rect = handle_rect_orig;
-      hrect.offset(size.left, size.top);
-      if (style & CSlider::kHorizontal)
-         hrect.offset(0, 3);
+      hrect.offset(dispv + 1, 0);
+      handle_rect.offset(dispv + 1, 0);
+   }
+   else
+   {
+      hrect.offset(1, dispv);
+      handle_rect.offset(1, dispv);
+   }
 
-      float dispv = limit_range(qdvalue, 0.f, 1.f);
-      if (style & CSlider::kRight || style & CSlider::kBottom)
-         dispv = 1 - dispv;
-      dispv *= range;
+   if( modmode )
+   {
+      CRect trect = hrect;
+      CRect trect2 = hrect;
 
-      if (style & CSlider::kHorizontal)
+      CColor ColBar = skin->getColor(Colors::Slider::Modulation::Positive);
+      CColor ColBarNeg = skin->getColor(Colors::Slider::Modulation::Negative);
+
+      ColBar.alpha = (int)(slider_alpha * 255.f);
+      ColBarNeg.alpha = (int)(slider_alpha * 255.f);
+
+      // float moddist = modval * range;
+      // We want modval + value to be bould by -1 and 1. So
+      float modup = modval;
+      float moddn = modval;
+      bool overtop = false;
+      bool overbot = false;
+      bool overotherside = false;
+
+      if( modup + value > 1.f )
       {
-         hrect.offset(dispv + 1, 0);
-         handle_rect.offset(dispv + 1, 0);
+         overtop = true;
+         modup = 1.f - value;
       }
-      else
+      if( modup + value < 0.f )
       {
-         hrect.offset(1, dispv);
-         handle_rect.offset(1, dispv);
+         overbot = true;
+         overotherside = true;
+         modup = 0.f - value;
       }
+      if( value - moddn < 0.f )
+      {
+         overbot = true;
+         moddn = value + 0.f;
+      }
+      if( value - moddn > 1.f )
+      {
+         overtop = true;
+         overotherside = true;
+         moddn = value - 1.f;
+      }
+      // at some point in the future draw something special with overtop and overbot
+
+      modup *= range;
+      moddn *= range;
+
+      /*
+      if( modval != 0 )
+         std::cout << "mv=" << modval
+                   << " val=" << value
+                   << " rn=" << range
+                   << " mu=" << modup
+                   << " md=" << moddn << std::endl;
+      */
+
+      std::vector<CRect> drawThese;
+      std::vector<CRect> drawTheseToo;
 
       if (style & CSlider::kHorizontal)
       {
-         pHandle->draw(dc, hrect, CPoint(0, 24 * typehy), modmode ? 0x7f : 0xff);
-         if( is_temposync )
+         trect.top += 8;
+         trect.bottom = trect.top + 2;
+
+         trect2.top += 8;
+         trect2.bottom = trect2.top + 2;
+
+         if (!modulation_is_bipolar)
          {
-            dc->setFont(displayFont);
-            dc->setFontColor(CColor(80,80,100));
-            auto newRect = hrect;
-            newRect.top += 1;
-            newRect.left += 1;
-            newRect.bottom = newRect.top + 15;
-            newRect.right = newRect.left + 21;
+            trect.left += 11;
+            trect.right = trect.left + modup;
+         }
+         else
+         {
+            trect.left += 11;
+            trect.right = trect.left + modup;
+            
+            trect2.right -= 17;
+            trect2.left = trect2.right - moddn;
+         }
 
-            auto tRect = newRect;
-            tRect.right = tRect.left + 11;
-            tRect.left += 2;
+         if (trect.left > trect.right)
+            std::swap(trect.left, trect.right);
 
-            auto sRect = newRect;
-            sRect.left += 11;
-            sRect.right -= 2;
-            dc->drawString("T", tRect, kCenterText, true);
-            dc->drawString("S", sRect, kCenterText, true);
+         if (trect2.left > trect2.right)
+            std::swap(trect2.left, trect2.right);
+         
+         drawThese.push_back(trect);
+         drawTheseToo.push_back(trect2);
 
+         if (overtop)
+         {
+            CRect topr;
+
+            if (overotherside)
+            {
+               topr.top = trect2.top;
+               topr.bottom = trect2.bottom;
+               topr.left = trect2.right + 1;
+               topr.right = topr.left + 3;
+
+               drawTheseToo.push_back(topr);
+            }
+            else
+            {
+               topr.top = trect.top;
+               topr.bottom = trect.bottom;
+               topr.left = trect.right + 1;
+               topr.right = topr.left + 3;
+
+               drawThese.push_back(topr);
+            }
+         }
+
+         if (overbot)
+         {
+            CRect topr;
+
+            if (overotherside)
+            {
+               topr.top = trect.top;
+               topr.bottom = trect.bottom;
+               topr.left = trect.left - 4;
+               topr.right = topr.left + 3;
+
+               drawThese.push_back(topr);
+            }
+            else
+            {
+               topr.top = trect2.top;
+               topr.bottom = trect2.bottom;
+               topr.left = trect2.left - 4;
+               topr.right = topr.left + 3;
+
+               drawTheseToo.push_back(topr);
+            }
          }
       }
       else
       {
-         pHandle->draw(dc, hrect, CPoint(0, 28 * typehy), modmode ? 0x7f : 0xff);
+         trect.left += 8;
+         trect.right = trect.left + 2;
+
+         trect2.left += 8;
+         trect2.right = trect2.left + 2;
+
+         if (!modulation_is_bipolar)
+         {
+            trect.top += 11;
+            trect.bottom = trect.top - modup;
+         }
+         else
+         {
+            trect.top += 11;
+            trect.bottom = trect.top - modup;
+
+            trect2.bottom -= 17;
+            trect2.top = trect2.bottom + moddn;
+         }
+
+         if (trect.top < trect.bottom)
+            std::swap(trect.top, trect.bottom);
+
+         if (trect2.top < trect2.bottom)
+            std::swap(trect2.top, trect2.bottom);
+
+         if (overbot)
+         {
+            CRect topr;
+
+            if (overotherside)
+            {
+               topr.left = trect.left;
+               topr.right = trect.right;
+               topr.bottom = trect.top + 1;
+               topr.top = topr.bottom + 3;
+
+               drawThese.push_back(topr);
+            }
+            else
+            {
+               topr.left = trect2.left;
+               topr.right = trect2.right;
+               topr.bottom = trect2.top + 1;
+               topr.top = topr.bottom + 3;
+
+               drawTheseToo.push_back(topr);
+            }
+         }
+
+         if (overtop)
+         {
+            CRect topr;
+
+            if (overotherside)
+            {
+               topr.left = trect2.left;
+               topr.right = trect2.right;
+               topr.bottom = trect2.bottom - 1;
+               topr.top = topr.bottom - 3;
+
+               drawTheseToo.push_back(topr);
+            }
+            else
+            {
+               topr.left = trect.left;
+               topr.right = trect.right;
+               topr.bottom = trect.bottom - 1;
+               topr.top = topr.bottom - 3;
+
+               drawThese.push_back(topr);
+            }
+         }
+
+         drawThese.push_back(trect);
+         drawTheseToo.push_back(trect2);
+      }
+
+      for (auto r : drawThese)
+      {
+         dc->setFillColor(ColBar);
+         dc->drawRect(r, VSTGUI::kDrawFilled);
+      }
+
+      if (modulation_is_bipolar)
+      {
+          for (auto r : drawTheseToo)
+          {
+             dc->setFillColor(ColBarNeg);
+             dc->drawRect(r, VSTGUI::kDrawFilled);
+          }
+      }
+   }
+   
+
+   if (pHandle && showHandle && (modmode != 2) && (!deactivated || !disabled))
+   {
+      draghandlecenter = hrect.getCenter();
+
+      if (style & CSlider::kHorizontal)
+      {
+         pHandle->draw(dc, hrect, CPoint(0, 24 * typehy), modmode ? slider_alpha : slider_alpha);
+         if( pHandleHover && in_hover )
+            pHandleHover->draw(dc, hrect, CPoint(0, 24 * typehy), modmode ? slider_alpha : slider_alpha);
+
+
          if( is_temposync )
          {
-            auto newRect = hrect;
-            newRect.top += 1;
-            newRect.left += 1;
-            newRect.bottom = newRect.top + 20;
-            newRect.right = newRect.left + 16;
+            if( in_hover && pTempoSyncHoverHandle )
+            {
+               pTempoSyncHoverHandle->draw( dc, hrect, CPoint( 0, 0 ), slider_alpha );
+            }
+            else if( pTempoSyncHandle )
+            {
+               pTempoSyncHandle->draw(dc, hrect, CPoint(0, 0), slider_alpha);
+            }
+            else
+            {
+               dc->setFont(labfont);
+               dc->setFontColor(CColor(80,80,100));
+               auto newRect = hrect;
+               newRect.top += 1;
+               newRect.left += 1;
+               newRect.bottom = newRect.top + 15;
+               newRect.right = newRect.left + 21;
+               
+               auto tRect = newRect;
+               tRect.right = tRect.left + 11;
+               tRect.left += 2;
+               
+               auto sRect = newRect;
+               sRect.left += 11;
+               sRect.right -= 2;
+               dc->drawString("T", tRect, kCenterText, true);
+               dc->drawString("S", sRect, kCenterText, true);
+            }
+         }
+      }
+      else if ((!deactivated || !disabled))
+      {
+         pHandle->draw(dc, hrect, CPoint(0, 28 * typehy), modmode ? slider_alpha : slider_alpha); // used to be 0x80 which was solid - lets keep taht for now
+         if( pHandleHover && in_hover )
+            pHandleHover->draw(dc, hrect, CPoint(0, 28 * typehy), modmode ? slider_alpha : slider_alpha); // used to be 0x80 which was solid - lets keep taht for now
 
-            dc->setFont(displayFont);
-            dc->setFontColor(CColor(80,80,100));
-
-            auto tRect = newRect;
-            tRect.bottom = tRect.top + 11;
-            tRect.top += 2;
-
-            auto sRect = newRect;
-            sRect.top += 11;
-            sRect.bottom -= 2;
+         if( is_temposync )
+         {
+            if( in_hover && pTempoSyncHoverHandle )
+            {
+               pTempoSyncHoverHandle->draw( dc, hrect, CPoint( 0, 0 ), slider_alpha );
+            }
+            else if( pTempoSyncHandle )
+            {
+               pTempoSyncHandle->draw(dc, hrect, CPoint(0, 0), slider_alpha);
+            }
+            else
+            {
+               auto newRect = hrect;
+               newRect.top += 1;
+               newRect.left += 1;
+               newRect.bottom = newRect.top + 20;
+               newRect.right = newRect.left + 16;
+               
+               dc->setFont(labfont);
+               dc->setFontColor(CColor(80,80,100));
+               
+               auto tRect = newRect;
+               tRect.bottom = tRect.top + 11;
+               tRect.top += 2;
+               
+               auto sRect = newRect;
+               sRect.top += 11;
+               sRect.bottom -= 2;
             
-            dc->drawString("T", tRect, kCenterText, true);
-            dc->drawString("S", sRect, kCenterText, true);
-
+               dc->drawString("T", tRect, kCenterText, true);
+               dc->drawString("S", sRect, kCenterText, true);
+            }
          }
                   
       }
@@ -307,7 +597,7 @@ void CSurgeSlider::draw(CDrawContext* dc)
    }
 
    // draw mod-fader
-   if (pHandle && modmode)
+   if (pHandle && showHandle && modmode && (!deactivated || !disabled))
    {
       CRect hrect(headrect);
       handle_rect = handle_rect_orig;
@@ -337,9 +627,18 @@ void CSurgeSlider::draw(CDrawContext* dc)
       }
 
       if (style & CSlider::kHorizontal)
-         pHandle->draw(dc, hrect, CPoint(28, 24 * typehy), 0xff);
+      {
+         pHandle->draw(dc, hrect, CPoint(28, 24 * typehy), slider_alpha);
+         if( pHandleHover && in_hover )
+            pHandleHover->draw(dc, hrect, CPoint(28, 24 * typehy), slider_alpha);
+      }
       else
-         pHandle->draw(dc, hrect, CPoint(24, 28 * typehy), 0xff);
+      {
+         pHandle->draw(dc, hrect, CPoint(24, 28 * typehy), slider_alpha);
+         if( pHandleHover && in_hover )
+            pHandleHover->draw(dc, hrect, CPoint(24, 28 * typehy), slider_alpha);
+      }
+      draghandlecenter = hrect.getCenter();
    }
 
    setDirty(false);
@@ -384,30 +683,42 @@ bool CSurgeSlider::isInMouseInteraction()
 
 CMouseEventResult CSurgeSlider::onMouseDown(CPoint& where, const CButtonState& buttons)
 {
-   CCursorHidingControl::onMouseDown(where, buttons);
-   if (disabled)
-      return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
-   if (controlstate)
    {
-#if MAC
-      if (buttons & kRButton)
-         statezoom = 0.1f;
-#endif
-      return kMouseEventHandled;
+      auto sge = dynamic_cast<SurgeGUIEditor*>(listener);
+      if( sge )
+      {
+         sge->clear_infoview_peridle = 0;
+      }
    }
+   if (storage)
+      this->hideCursor = !Surge::Storage::getUserDefaultValue(storage, "showCursorWhileEditing", 0);
+
+   hasBeenDraggedDuringMouseGesture = false;
+   if( wheelInitiatedEdit )
+      while( editing )
+         endEdit();
+   wheelInitiatedEdit = false;
+
 
    if (listener &&
        buttons & (kAlt | kRButton | kMButton | kButton4 | kButton5 | kShift | kControl | kApple | kDoubleClick))
    {
       if (listener->controlModifierClicked(this, buttons) != 0)
-         return kMouseEventHandled;
+         return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
+   }
+
+   onMouseDownCursorHelper(where);
+
+   if (controlstate)
+   {
+      return kMouseEventHandled;
    }
 
    if ((buttons & kLButton) && !controlstate)
    {
       beginEdit();
       controlstate = cs_drag;
-      statezoom = 1.f;
+      // getFrame()->setCursor( VSTGUI::kCursorHand );
 
       edit_value = modmode ? &modval : &value;
       oldVal = *edit_value;
@@ -415,7 +726,13 @@ CMouseEventResult CSurgeSlider::onMouseDown(CPoint& where, const CButtonState& b
       restvalue = 0.f;
       restmodval = 0.f;
 
-      detachCursor(where);
+      // Show the infowindow. Bit heavy handed
+      bounceValue();
+      if( listener )
+         listener->valueChanged( this );
+      
+      // detachCursor(where);
+      startCursorHide(where);
       return kMouseEventHandled;
    }
    return kMouseEventHandled;
@@ -423,9 +740,28 @@ CMouseEventResult CSurgeSlider::onMouseDown(CPoint& where, const CButtonState& b
 
 CMouseEventResult CSurgeSlider::onMouseUp(CPoint& where, const CButtonState& buttons)
 {
-   CCursorHidingControl::onMouseUp(where, buttons);
-   if (disabled)
-      return kMouseEventHandled;
+
+   {
+      auto sge = dynamic_cast<SurgeGUIEditor*>(listener);
+      if( sge )
+      {
+         sge->clear_infoview_peridle = -1;
+      }
+   }
+
+   bool resetPosition = hasBeenDraggedDuringMouseGesture;
+
+   // "elastic edit" - resets to the value before the drag started if Alt is held
+   if (buttons & kAlt)
+   {
+      hasBeenDraggedDuringMouseGesture = false;
+      resetPosition = false;
+      *edit_value = oldVal;
+      setDirty();
+      if (isDirty() && listener)
+         listener->valueChanged(this);
+   }
+
    if (controlstate)
    {
 #if MAC
@@ -437,14 +773,58 @@ CMouseEventResult CSurgeSlider::onMouseUp(CPoint& where, const CButtonState& but
 #endif
       endEdit();
       controlstate = cs_none;
+      // getFrame()->setCursor( VSTGUI::kCursorDefault );
+      
       edit_value = nullptr;
 
-      attachCursor();
+
+      if( resetPosition )
+         endCursorHide(draghandlecenter);
+      else
+         endCursorHide();
+      //attachCursor();
    }
+
    return kMouseEventHandled;
 }
 
-double CSurgeSlider::getMouseDeltaScaling(CPoint& where, const CButtonState& buttons)
+VSTGUI::CMouseEventResult CSurgeSlider::onMouseEntered(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons)
+{
+   in_hover = true;
+
+   {
+      auto sge = dynamic_cast<SurgeGUIEditor*>(listener);
+      if( sge )
+      {
+         sge->sliderHoverStart( getTag() );
+      }
+   }
+
+   invalid();
+   return kMouseEventHandled;
+}
+
+VSTGUI::CMouseEventResult CSurgeSlider::onMouseExited(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons)
+{
+   in_hover = false;
+
+   {
+      auto sge = dynamic_cast<SurgeGUIEditor*>(listener);
+      if( sge )
+      {
+         sge->sliderHoverEnd( getTag() );
+      }
+   }
+   
+   if( wheelInitiatedEdit )
+      while( editing )
+         endEdit();
+   wheelInitiatedEdit = false;
+   invalid();
+   return kMouseEventHandled;
+}
+
+double CSurgeSlider::getMouseDeltaScaling(const CPoint& where, const CButtonState& buttons)
 {
    double rate;
 
@@ -465,6 +845,9 @@ double CSurgeSlider::getMouseDeltaScaling(CPoint& where, const CButtonState& but
       break;
    }
 
+   if (buttons.isTouch())
+      rate = 1.0;
+
    if (buttons & kRButton)
       rate *= 0.1;
    if (buttons & kShift)
@@ -473,15 +856,55 @@ double CSurgeSlider::getMouseDeltaScaling(CPoint& where, const CButtonState& but
    return rate;
 }
 
-void CSurgeSlider::onMouseMoveDelta(CPoint& where,
+void CSurgeSlider::onMouseMoveDelta(const CPoint& where,
                                     const CButtonState& buttons,
                                     double dx,
                                     double dy)
 {
-   if (disabled)
-      return;
+   if( controlstate != cs_drag )
+   {
+      // FIXME - deal with modulation
+      auto handle_rect = handle_rect_orig;
+      auto size = getViewSize();
+      handle_rect.offset(size.left, size.top);
+      
+      float dispv = limit_range(qdvalue, 0.f, 1.f);
+      if (style & CSlider::kRight || style & CSlider::kBottom)
+         dispv = 1 - dispv;
+      dispv *= range;
+      
+      if( modmode )
+      {
+         if (modmode == 2)
+            dispv = limit_range(0.5f + 0.5f * modval, 0.f, 1.f);
+         else
+            dispv = limit_range(modval + value, 0.f, 1.f);
+         
+         if (style & CSlider::kRight || style & CSlider::kBottom)
+            dispv = 1 - dispv;
+         dispv *= range;
+      }
+      
+      if (style & CSlider::kHorizontal)
+      {
+         handle_rect.offset(dispv + 1, 3);
+      }
+      else
+      {
+         handle_rect.offset(1, dispv);
+      }
+
+      /*
+      if( handle_rect.pointInside(where) )
+         getFrame()->setCursor( VSTGUI::kCursorHand );
+      else
+         getFrame()->setCursor( VSTGUI::kCursorDefault );
+      */
+   }
+   
    if ((controlstate == cs_drag) && (buttons & kLButton))
    {
+      hasBeenDraggedDuringMouseGesture = true;
       if (!edit_value)
          return;
       CPoint p;
@@ -497,7 +920,9 @@ void CSurgeSlider::onMouseMoveDelta(CPoint& where,
 
       *edit_value += diff / (float)range;
 
-      bounceValue(!(sliderMoveRateState==MoveRateState::kClassic));
+      // this "retain" means if you turnaround an overshoot you have to use it all up first, vs
+      // starting the turnaround right away. That behavior only makes sense in exact mode.
+      bounceValue(sliderMoveRateState==MoveRateState::kExact);
 
       setDirty();
 
@@ -544,9 +969,22 @@ bool CSurgeSlider::onWheel(const VSTGUI::CPoint& where, const float &distance, c
    
    edit_value = modmode ? &modval : &value;
    oldVal = *edit_value;
+
+   if( editing == 0 )
+   {
+      wheelInitiatedEdit = true;
+      beginEdit();
+   }
    
-   beginEdit();
-   *edit_value += rate * distance;
+   if ( intRange && isStepped && !(buttons & kControl) )
+   {
+      *edit_value += distance / (intRange);
+   }
+   else
+   {
+      *edit_value += rate * distance;
+   }
+   
    bounceValue();
    if (modmode)
    {
@@ -559,12 +997,62 @@ bool CSurgeSlider::onWheel(const VSTGUI::CPoint& where, const float &distance, c
    setDirty();
    if (isDirty() && listener)
       listener->valueChanged(this);
-   //endEdit();
+
    /*
-   ** No need to call endEdit since the timer in SurgeGUIEditor will close the
-   ** info window, and  SurgeGUIEditor will make sure a window
-   ** doesn't appear twice
+   ** If we call endEdit it will dismiss the infowindow so instead
+   ** use the state management where I have a lignering begin 
+   ** which I clear when we click or leave.
    */
    edit_value = nullptr;
    return true;
+}
+
+void CSurgeSlider::onSkinChanged()
+{
+   if (style & CSlider::kHorizontal)
+   {
+      pTray = associatedBitmapStore->getBitmap(IDB_FADERH_BG);
+      pHandle = associatedBitmapStore->getBitmap(IDB_FADERH_HANDLE);
+      pTempoSyncHandle = associatedBitmapStore->getBitmapByStringID( "TEMPOSYNC_HORIZONTAL_OVERLAY" );
+      pTempoSyncHoverHandle = associatedBitmapStore->getBitmapByStringID( "TEMPOSYNC_HORIZONTAL_HOVER_OVERLAY" );
+   }
+   else
+   {
+      pTray = associatedBitmapStore->getBitmap(IDB_FADERV_BG);
+      pHandle = associatedBitmapStore->getBitmap(IDB_FADERV_HANDLE);
+      pTempoSyncHandle = associatedBitmapStore->getBitmapByStringID( "TEMPOSYNC_VERTICAL_OVERLAY" );
+      pTempoSyncHoverHandle = associatedBitmapStore->getBitmapByStringID( "TEMPOSYNC_VERTICAL_HOVER_OVERLAY" );
+   }
+
+   if( skinControl.get() )
+   {
+      auto hi = skin->propertyValue( skinControl, "handle_image" );
+      if( hi.isJust() )
+      {
+         pHandle = associatedBitmapStore->getBitmapByStringID(hi.fromJust());
+      }
+      auto ho = skin->propertyValue( skinControl, "handle_hover_image" );
+      if( ho.isJust() )
+      {
+         pHandleHover = associatedBitmapStore->getBitmapByStringID(ho.fromJust());
+      }
+      auto ht = skin->propertyValue( skinControl, "handle_temposync_image" );
+      if( ht.isJust() )
+      {
+         pTempoSyncHandle = associatedBitmapStore->getBitmapByStringID(ht.fromJust());
+      }
+
+      auto hth = skin->propertyValue( skinControl, "handle_temposync_hover_image" );
+      if( hth.isJust() )
+      {
+         pTempoSyncHoverHandle = associatedBitmapStore->getBitmapByStringID(hth.fromJust());
+      }
+   }
+   
+   if( ! pHandleHover )
+      pHandleHover = skin->hoverBitmapOverlayForBackgroundBitmap(skinControl,
+                                                                 dynamic_cast<CScalableBitmap*>( pHandle ),
+                                                                 associatedBitmapStore,
+                                                                 Surge::UI::Skin::HoverType::HOVER);
+
 }

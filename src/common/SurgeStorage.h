@@ -1,42 +1,40 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #pragma once
 #include "globals.h"
 #include "Parameter.h"
 #include "ModulationSource.h"
 #include "Wavetable.h"
 #include <vector>
-#include <thread/CriticalSection.h>
 #include <memory>
+#include <mutex>
+#include <atomic>
 #include <stdint.h>
 
-#ifndef TIXML_USE_STL
-#define TIXML_USE_STL
-#endif
-#include <tinyxml.h>
+#include "tinyxml/tinyxml.h"
 
-#if LINUX 
-#include <experimental/filesystem>
-#elif MAC || (WINDOWS && TARGET_RACK)
-#include <filesystem.h>
-#else
-#include <filesystem>
-#endif
+#include "filesystem/import.h"
 
 #include <fstream>
 #include <iterator>
 #include <functional>
+#include <unordered_map>
+#include <map>
 
 #include "Tunings.h"
-
-
-#if WINDOWS && ( _MSC_VER >= 1920 )
-// vs2019
-namespace fs = std::filesystem;
-#else
-namespace fs = std::experimental::filesystem;
-#endif
 
 #if WINDOWS
 #define PATH_SEPARATOR '\\'
@@ -44,7 +42,7 @@ namespace fs = std::experimental::filesystem;
 #define PATH_SEPARATOR '/'
 #endif
 
-/* PATCH layer			*/
+// patch layer
 
 const int n_oscs = 3;
 const int n_lfos_voice = 6;
@@ -59,11 +57,37 @@ const int FIRoffset = FIRipol_N >> 1;
 const int FIRipolI16_N = 8;
 const int FIRoffsetI16 = FIRipolI16_N >> 1;
 
+const int n_fx_slots=8;
+
+// XML storage fileformat revision
+// 0 -> 1 new EG attack shapes (0>1, 1>2, 2>2)
+// 1 -> 2 new LFO EG stages (if (decay == max) sustain = max else sustain = min
+// 2 -> 3 filter subtypes added comb should default to 1 and moog to 3
+// 3 -> 4 comb+/- combined into 1 filtertype (subtype 0,0->0 0,1->1 1,0->2 1,1->3 )
+// 4 -> 5 stereo filterconf now have seperate pan controls
+// 5 -> 6 new filter sound in v1.2 (same parameters, but different sound & changed resonance
+// response).
+// 6 -> 7 custom controller state now stored (in seq. recall)
+// 7 -> 8 larger resonance
+// range (old filters are set to subtype 1), pan2 -> width
+// 8 -> 9 now 8 controls (offset ids larger
+// than ctrl7 by +1), custom controllers have names (guess for pre-rev9 patches)
+// 9 -> 10 added character parameter
+// 10 -> 11 (1.6.2 release) added DAW Extra State
+// 11 -> 12 (1.6.3 release) added new parameters to the Distortion effect
+// 12 -> 13 (1.7.0 release) deactivation; sine LP/HP, sine/FM2/3 feedback extension/bipolar
+// 13 -> 14 add phaser number of stages parameter
+// 13 -> 14 add ability to configure vocoder modulator mono/sterao/L/R
+
+const int ff_revision = 14;
+
 extern float sinctable alignas(16)[(FIRipol_M + 1) * FIRipol_N * 2];
 extern float sinctable1X alignas(16)[(FIRipol_M + 1) * FIRipol_N];
 extern short sinctableI16 alignas(16)[(FIRipol_M + 1) * FIRipolI16_N];
 extern float table_envrate_lpf alignas(16)[512],
-             table_envrate_linear alignas(16)[512];
+             table_envrate_linear alignas(16)[512],
+             table_glide_exp alignas(16)[512],
+             table_glide_log alignas(16)[512];
 extern float table_note_omega alignas(16)[2][512];
 extern float waveshapers alignas(16)[8][1024];
 extern float samplerate, samplerate_inv;
@@ -75,8 +99,10 @@ const int n_global_params = 113;
 const int n_global_postparams = 1;
 const int n_total_params = n_global_params + 2 * n_scene_params + n_global_postparams;
 const int metaparam_offset = 20480; // has to be bigger than total + 16 * 130 for fake VST3 mapping
+const int n_scenes = 2;
+const int n_filterunits_per_scene = 2;
 
-enum sub3_scenemode
+enum scene_mode
 {
    sm_single = 0,
    sm_split,
@@ -85,9 +111,15 @@ enum sub3_scenemode
    n_scenemodes,
 };
 
-const char scenemode_abberations[n_scenemodes][16] = {"Single", "Key Split", "Dual", "Channel Split"};
+const char scene_mode_names[n_scenemodes][16] =
+{
+   "Single",
+   "Key Split",
+   "Dual",
+   "Channel Split",
+};
 
-enum sub3_polymode
+enum play_mode
 {
    pm_poly = 0,
    pm_mono,
@@ -97,48 +129,96 @@ enum sub3_polymode
    pm_latch,
    n_polymodes,
 };
-const char polymode_abberations[n_polymodes][64] = {"Poly",
-                                                    "Mono",
-                                                    "Mono (Single Trigger EG)",
-                                                    "Mono (Fingered Porta)",
-                                                    "Mono (S.T. EG + F. Porta)",
-                                                    "Latch (Monophonic)"};
+const char play_mode_names[n_polymodes][64] =
+{
+   "Poly",
+   "Mono",
+   "Mono (Single Trigger)",
+   "Mono (Fingered Portamento)",
+   "Mono (Single Trigger + Fingered Portamento)",
+   "Latch (Monophonic)",
+};
 
-enum sub3_lfomode
+enum porta_curve
+{
+    porta_log = -1,
+    porta_lin = 0,
+    porta_exp = 1,
+};
+
+enum deform_type
+{
+    type_1,
+    type_2,
+    type_3,
+    n_types,
+};
+
+enum lfo_mode
 {
    lm_freerun = 0,
    lm_keytrigger,
    lm_random,
    n_lfomodes,
 };
-const char lfomode_abberations[n_lfomodes][16] = {"Freerun", "Keytrigger", "Random"};
 
-enum sub3_charactermode
+const char lfo_mode_names[n_lfomodes][16] =
+{
+   "Freerun",
+   "Keytrigger",
+   "Random",
+};
+
+enum character_mode
 {
    cm_warm = 0,
    cm_neutral,
    cm_bright,
    n_charactermodes,
 };
-const char character_abberations[n_charactermodes][16] = {"Warm", "Neutral", "Bright"};
+const char character_names[n_charactermodes][16] =
+{
+   "Warm",
+   "Neutral",
+   "Bright",
+};
 
-enum sub3_osctypes
+enum osc_types
 {
    ot_classic = 0,
    ot_sinus,
    ot_wavetable,
    ot_shnoise,
    ot_audioinput,
-   ot_FM,
+   ot_FM3, // it used to just FM, then the UI called it FM3, so name it this way but this order has to stick
    ot_FM2,
    ot_WT2,
    num_osctypes,
 };
-const char osctype_abberations[num_osctypes][16] = {"Classic",  "Sine", "Wavetable", "S/H Noise",
-                                                    "Audio In", "FM3",  "FM2",       "Window"};
-const char window_abberations[9][16] = {"Triangular", "Cosine",       "Blend 1",
-                                        "Blend 2",    "Blend 3",      "Ramp",
-                                        "Sine Cycle", "Square Cycle", "Rectangular"};
+const char osc_type_names[num_osctypes][16] =
+{
+   "Classic",
+   "Sine",
+   "Wavetable",
+   "S&H Noise",
+   "Audio In",
+   "FM3",
+   "FM2",
+   "Window",
+};
+
+const char window_names[9][16] =
+{
+   "Triangle",
+   "Cosine",
+   "Blend 1",
+   "Blend 2",
+   "Blend 3",
+   "Sawtooth",
+   "Sine",
+   "Square",
+   "Rectangle",
+};
 
 inline bool uses_wavetabledata(int i)
 {
@@ -151,7 +231,20 @@ inline bool uses_wavetabledata(int i)
    return false;
 }
 
-enum sub3_fxtypes
+const char fxslot_names[8][NAMECHARS] =
+{
+   "A Insert FX 1",
+   "A Insert FX 2",
+   "B Insert FX 1",
+   "B Insert FX 2",
+   "Send FX 1",
+   "Send FX 2",
+   "Global FX 1",
+   "Global FX 2",
+};
+
+
+enum fx_types
 {
    fxt_off = 0,
    fxt_delay,
@@ -164,13 +257,30 @@ enum sub3_fxtypes
    fxt_conditioner,
    fxt_chorus4,
    fxt_vocoder,
-   //	fxt_emphasize,
    fxt_reverb2,
+   fxt_flanger,
+   fxt_ringmod,
+   fxt_airwindows,
    num_fxtypes,
 };
-const char fxtype_abberations[num_fxtypes][16] = {
-    "Off", "Delay",     "Reverb",      "Phaser", "Rotary",  "Distortion",
-    "EQ",  "Freqshift", "Conditioner", "Chorus", "Vocoder", "Reverb2"};
+const char fx_type_names[num_fxtypes][16] =
+{
+   "Off",
+   "Delay",
+   "Reverb 1",
+   "Phaser",
+   "Rotary",
+   "Distortion",
+   "EQ",
+   "Freq Shift",
+   "Conditioner",
+   "Chorus",
+   "Vocoder",
+   "Reverb 2",
+   "Flanger",
+   "Ring Mod",
+   "Airwindows",
+};
 
 enum fx_bypass
 {
@@ -181,8 +291,13 @@ enum fx_bypass
    n_fx_bypass,
 };
 
-const char fxbypass_abberations[n_fx_bypass][16] = {"All FX", "No Send FX", "Scene FX Only",
-                                                    "All FX Off"};
+const char fxbypass_names[n_fx_bypass][32] =
+{
+   "All FX",
+   "No Send FX",
+   "No Send And Global FX",
+   "All FX Off",
+};
 
 enum fb_configuration
 {
@@ -197,8 +312,17 @@ enum fb_configuration
    n_fb_configuration,
 };
 
-const char fbc_abberations[n_fb_configuration][16] = {"Serial 1", "Serial 2", "Serial 3", "Dual 1",
-                                                      "Dual 2",   "Stereo",   "Ring",     "Wide"};
+const char fbc_names[n_fb_configuration][16] =
+{
+   "Serial 1",
+   "Serial 2",
+   "Serial 3",
+   "Dual 1",
+   "Dual 2",
+   "Stereo",
+   "Ring",
+   "Wide",
+};
 
 enum fm_configuration
 {
@@ -209,23 +333,42 @@ enum fm_configuration
    n_fm_configuration,
 };
 
-const char fmc_abberations[n_fm_configuration][16] = {"Off", "2 > 1", "3 > 2 > 1", "2 > 1 < 3"};
-
-enum lfoshapes
+const char fmc_names[n_fm_configuration][16] =
 {
-   ls_sine = 0,
-   ls_tri,
-   ls_square,
-   ls_ramp,
-   ls_noise,
-   ls_snh,
-   ls_constant1,
-   ls_stepseq,
-   n_lfoshapes
+   "Off",
+   "2 > 1",
+   "3 > 2 > 1",
+   "2 > 1 < 3",
 };
 
-const char ls_abberations[n_lfoshapes][16] = {"Sine",  "Triangle", "Square",   "Ramp",
-                                              "Noise", "S&H",      "Envelope", "Step Seq"};
+enum lfotypes
+{
+   lt_sine = 0,
+   lt_tri,
+   lt_square,
+   lt_ramp,
+   lt_noise,
+   lt_snh,
+   lt_envelope,
+   lt_stepseq,
+   lt_mseg,
+   lt_function,
+   n_lfotypes
+};
+
+const char lt_names[n_lfotypes][32] =
+{
+   "Sine",
+   "Triangle",
+   "Square",
+   "Sawtooth",
+   "Noise",
+   "Sample & Hold",
+   "Envelope",
+   "Step Sequencer",
+   "MSEG",
+   "Function (coming in 1.9!)",
+};
 
 enum fu_type
 {
@@ -239,22 +382,158 @@ enum fu_type
    fut_br12,
    fut_comb,
    fut_SNH,
-   // fut_comb_neg,
-   // fut_apf,
+   fut_vintageladder,
+   fut_obxd_2pole,
+   fut_obxd_4pole,
+   fut_k35_lp,
+   fut_k35_hp,
+   fut_diode,
    n_fu_type,
 };
-const char fut_abberations[n_fu_type][32] = {
-    "Off",           "Lowpass 12dB",  "Lowpass 24dB", "Lowpass 6-24dB Ladder",
-    "Highpass 12dB", "Highpass 24dB", "Bandpass",     "Notch",
-    "Comb",          "Sample & Hold" /*,"APF"*/};
-const int fut_subcount[n_fu_type] = {0, 3, 3, 4, 3, 3, 4, 2, 4, 0};
+const char fut_names[n_fu_type][32] =
+{
+   "Off",
+   "Lowpass 12 dB/oct",
+   "Lowpass 24 dB/oct",
+   "Legacy Ladder",
+   "Highpass 12 dB/oct",
+   "Highpass 24 dB/oct",
+   "Bandpass",
+   "Notch",
+   "Comb",
+   "Sample & Hold",
+   "Vintage Ladder",
+   "OB-Xd 12 dB/oct",
+   "OB-Xd 24 dB/oct",
+   "Sallen-Key Lowpass",
+   "Sallen-Key Highpass",
+   "Diode Ladder",
+};
+
+const char fut_bp_subtypes[6][32] =
+{
+   "Clean 12 dB/oct",
+   "Driven 12 dB/oct",
+   "Smooth 12 dB/oct",
+   "Clean 24 dB/oct",
+   "Driven 24 dB/oct",
+   "Smooth 24 dB/oct",
+};
+
+const char fut_br_subtypes[4][32] =
+{
+   "12 dB/oct",
+   "12 dB/oct Mild",
+   "24 dB/oct",
+   "24 dB/oct Mild",
+};
+
+const char fut_comb_subtypes[4][64] =
+{
+   "Positive, 50% Wet",
+   "Positive, 100% Wet",
+   "Negative, 50% Wet",
+   "Negative, 100% Wet",
+};
+
+const char fut_def_subtypes[3][32] =
+{
+   "Clean",
+   "Driven",
+   "Smooth",
+};
+
+const char fut_ldr_subtypes[4][32] =
+{
+   "6 dB/oct",
+   "12 dB/oct",
+   "18 dB/oct",
+   "24 dB/oct",
+};
+
+const char fut_vintageladder_subtypes[6][32] =
+{
+   "Strong",
+   "Strong Compensated",
+   "Dampened",
+   "Dampened Compensated",
+};
+
+const char fut_obxd_2p_subtypes[8][32] =
+{
+   "Lowpass",
+   "Bandpass",
+   "Highpass",
+   "Notch",
+   "Lowpass Pushed",
+   "Bandpass Pushed",
+   "Highpass Pushed",
+   "Notch Pushed",
+};
+
+const char fut_obxd_4p_subtypes[4][32] =
+{
+   "6 dB/oct",
+   "12 dB/oct",
+   "18 dB/oct",
+   "24 dB/oct",
+};
+
+const char fut_k35_subtypes[5][32] =
+{
+   "No Saturation",
+   "Mild Saturation",
+   "Moderate Saturation",
+   "Heavy Saturation",
+   "Extreme Saturation"
+};
+
+const float fut_k35_saturations[5] =
+{
+   0.0f,
+   1.0f,
+   2.0f,
+   3.0f,
+   4.0f
+};
+
+const char fut_diode_subtypes[1][32] =
+{
+   "24 dB/oct"
+};
+
+const int fut_subcount[n_fu_type] = {
+   0, // fut_none
+   3, // fut_lp12
+   3, // fut_lp24
+   4, // fut_lpmoog
+   3, // fut_hp12
+   3, // fut_hp24
+   6, // fut_bp12
+   4, // fut_br12
+   4, // fut_comb
+   0, // fut_SNH
+   4, // fut_vintageladder
+   8, // fut_obxd_2pole
+   4, // fut_obxd_4pole
+   5, // fut_k35_lp
+   5, // fut_k35_hp
+   0  // fut_diode
+};
 
 enum fu_subtype
 {
    st_SVF = 0,
-   st_Rough,
-   st_Smooth,
-   st_Medium, // disabled
+   st_Rough = 1,
+   st_Smooth = 2,
+   st_Medium = 3, // disabled
+   st_SVFBP24 = 3,
+   st_RoughBP24 = 4,
+   st_SmoothBP24 = 5,
+   st_BR12 = 0,
+   st_BR12Mild = 1,
+   st_BR24 = 2,
+   st_BR24Mild = 3,
 };
 
 enum ws_type
@@ -268,8 +547,15 @@ enum ws_type
    n_ws_type,
 };
 
-const char wst_abberations[n_ws_type][16] = {"Off",        "Soft", "Hard",
-                                             "Asymmetric", "Sine", "Digital"};
+const char wst_names[n_ws_type][16] =
+{
+   "Off",
+   "Soft",
+   "Hard",
+   "Asymmetric",
+   "Sine",
+   "Digital",
+};
 
 enum env_mode_type
 {
@@ -278,7 +564,11 @@ enum env_mode_type
    n_em_type,
 };
 
-const char em_abberations[n_em_type][16] = {"Digital", "Analog"};
+const char em_names[n_em_type][16] =
+{
+   "Digital",
+   "Analog",
+};
 
 struct MidiKeyState
 {
@@ -308,6 +598,7 @@ struct OscillatorStorage : public CountedSetUserData // The counted set is the w
    Parameter p[n_osc_params];
    Parameter keytrack, retrigger;
    Wavetable wt;
+   char wavetable_display_name[256];
    void* queue_xmldata;
    int queue_type;
 
@@ -320,7 +611,7 @@ struct OscillatorStorage : public CountedSetUserData // The counted set is the w
 struct FilterStorage
 {
    Parameter type;
-   Parameter subtype;
+   Parameter subtype; // NOTE: In SurgeSynthesizer we assume that type and subtype are adjacent in param space. See comment there.
    Parameter cutoff;
    Parameter resonance;
    Parameter envmod;
@@ -350,6 +641,7 @@ struct LFOStorage
 
 struct FxStorage
 {
+   // Just a heads up if you change this please go look at fx_reorder in SurgeSorage too
    Parameter type;
    Parameter return_level;
    Parameter p[n_fx_params];
@@ -363,8 +655,8 @@ struct SurgeSceneStorage
    Parameter drift, noise_colour, keytrack_root;
    Parameter osc_solo;
    Parameter level_o1, level_o2, level_o3, level_noise, level_ring_12, level_ring_23, level_pfg;
-   Parameter mute_o1, mute_o2, mute_o3, mute_noise, mute_ring_12, mute_ring_23;
-   Parameter solo_o1, solo_o2, solo_o3, solo_noise, solo_ring_12, solo_ring_23;
+   Parameter mute_o1, mute_o2, mute_o3, mute_noise, mute_ring_12, mute_ring_23; // all mute parameters must be contiguous
+   Parameter solo_o1, solo_o2, solo_o3, solo_noise, solo_ring_12, solo_ring_23; // all solo parameters must be contiguous
    Parameter route_o1, route_o2, route_o3, route_noise, route_ring_12, route_ring_23;
    Parameter vca_level;
    Parameter pbrange_dn, pbrange_up;
@@ -397,6 +689,73 @@ struct StepSequencerStorage
    uint64_t trigmask;
 };
 
+const int max_msegs = 128;
+struct MSEGStorage {
+   struct segment {
+      float duration;
+      float dragDuration; // Snap Mode Helper
+      float v0;
+      float dragv0; // in snap mode, this is the location we are dragged to. It is just convenience storage.
+      float nv1; // this is the v0 of the neighbor and is here just for convenience. MSEGModulationHelper::rebuildCache will set it
+      float dragv1; // only used in the endpoint
+      float cpduration, cpv, dragcpv, dragcpratio = 0.5;
+      bool  useDeform = true;
+      bool  invertDeform = false;
+      enum Type {
+         LINEAR = 1,
+         QUAD_BEZIER,
+         SCURVE,
+         SINE,
+         STAIRS,
+         BROWNIAN,
+         SQUARE,
+         TRIANGLE,
+         HOLD,
+         SAWTOOTH,
+         RESERVED,  // used to be Spike, but it broke some MSEG model constraints, so we ditched it - can add a different curve type later on!
+         BUMP,
+         SMOOTH_STAIRS,
+      } type;
+   };
+
+   // These values are streamed so please don't change the integer values
+   enum EndpointMode {
+      LOCKED = 1,
+      FREE = 2
+   } endpointMode = FREE;
+
+   // These values are streamed so please don't change the integer values
+   enum EditMode {
+       ENVELOPE = 0,    // no constraints on horizontal time axis
+       LFO = 1,         // MSEG editing is constrained to just one phase unit (0 ... 1), useful for single cycle waveform editing
+   } editMode = ENVELOPE;
+
+   // These values are streamed so please don't change the integer values
+   enum LoopMode {
+      ONESHOT = 1,      // Play the MSEG front to back and then output the final value
+      LOOP = 2,         // Play the MSEG front to loop end and then return to loop start
+      GATED_LOOP = 3    // Play the MSEG front to loop end, then return to loop start, but if at any time
+                        // a note off is generated, jump to loop end at current value and progress to end once
+   } loopMode = LOOP;
+
+   int loop_start = -1, loop_end = -1; // -1 signifies the entire MSEG in this context
+
+   int n_activeSegments = 0;
+   std::array<segment, max_msegs> segments;
+
+   // These are calculated values which derive from the segment which we cache for efficiency.
+   // If you edit the segments then MSEGModulationHelper::rebuildCache can rebuild them
+   float totalDuration;
+   std::array<float, max_msegs> segmentStart, segmentEnd;
+   float durationToLoopEnd;
+   float durationLoopStartToLoopEnd;
+
+   static constexpr float minimumDuration = 0.0;
+};
+
+struct FormulaModulatorStorage { // Currently an unused placeholder
+};
+
 /*
 ** There are a collection of things we want your DAW to save about your particular instance
 ** but don't want saved in your patch. So have this extra structure in the patch which we
@@ -405,20 +764,52 @@ struct StepSequencerStorage
 struct DAWExtraStateStorage
 {
    bool isPopulated = false;
-    
-   int instanceZoomFactor = -1;
+
+   /*
+    * Here's the prescription to add something to the editor state
+    *
+    * 1. Add it here with a reasonable default.
+    * 2. In the SurgeGUIEditor Constructor, read off the value
+    * 3. In SurgeGUIEditor::populateDawExtraState write it
+    * 4. In SurgeGUIEditor::loadDawExtraState read it (this will probably be pretty similar to
+    *    the constructor code in step 4, but this is the step when restoring, as opposed to creating
+    *    an object).
+    * 5. In SurgePatch load/save XML write and read it
+    *
+    * Then the state will survive create/destroy and save/restore
+    */
+   struct EditorState
+   {
+      int instanceZoomFactor = -1;
+      int current_scene = 0;
+      int current_fx = 0;
+      int current_osc[n_scenes] = {0};
+      modsources modsource = ms_lfo1, modsource_editor[n_scenes] = {ms_lfo1, ms_lfo1};
+      bool isMSEGOpen = false;
+   } editor;
+
+
    bool mpeEnabled = false;
+   int mpePitchBendRange = -1;
+
    bool hasTuning = false;
    std::string tuningContents = "";
+
+   bool hasMapping = false;
+   std::string mappingContents = "";
+
+   std::unordered_map<int, int> midictrl_map; // param -> midictrl
+   std::unordered_map<int, int> customcontrol_map; // custom controller number -> midicontrol
 };
 
 
 struct PatchTuningStorage
 {
-    bool tuningStoredInPatch = false;
-    std::string tuningContents = "";
+   bool tuningStoredInPatch = false;
+   std::string tuningContents = "";
+   std::string mappingContents = "";
 };
-    
+
 class SurgeStorage;
 
 class SurgePatch
@@ -439,30 +830,38 @@ public:
    unsigned int save_xml(void** data);
    unsigned int save_RIFF(void** data);
 
+   // Factor these so the LFO Preset Mechanism can use them also
+   void msegToXMLElement( MSEGStorage *ms, TiXmlElement &parent ) const;
+   void msegFromXMLElement( MSEGStorage *ms, TiXmlElement *parent ) const;
+   void stepSeqToXmlElement( StepSequencerStorage *ss, TiXmlElement &parent, bool streamMask ) const;
+   void stepSeqFromXmlElement( StepSequencerStorage *ss, TiXmlElement *parent ) const;
+
    void load_patch(const void* data, int size, bool preset);
    unsigned int save_patch(void** data);
 
    // data
-   SurgeSceneStorage scene[2], morphscene;
-   FxStorage fx[8];
+   SurgeSceneStorage scene[n_scenes], morphscene;
+   FxStorage fx[n_fx_slots];
    // char name[NAMECHARS];
-   int scene_start[2], scene_size;
-   Parameter scene_active, scenemode, scenemorph, splitkey;
+   int scene_start[n_scenes], scene_size;
+   Parameter scene_active, scenemode, scenemorph, splitpoint;  // streaming name for splitpoint is splitkey (due to legacy)
    Parameter volume;
    Parameter polylimit;
    Parameter fx_bypass, fx_disable;
    Parameter character;
 
-   StepSequencerStorage stepsequences[2][n_lfos];
+   StepSequencerStorage stepsequences[n_scenes][n_lfos];
+   MSEGStorage msegs[n_scenes][n_lfos];
+   FormulaModulatorStorage formulamods[n_scenes][n_lfos];
 
    PatchTuningStorage patchTuning;
    DAWExtraStateStorage dawExtraState;
-   
+
    std::vector<Parameter*> param_ptr;
    std::vector<int> easy_params_id;
 
    std::vector<ModulationRouting> modulation_global;
-   pdata scenedata[2][n_scene_params];
+   pdata scenedata[n_scenes][n_scene_params];
    pdata globaldata[n_global_params];
    void* patchptr;
    SurgeStorage* storage;
@@ -497,7 +896,7 @@ struct PatchCategory
    int numberOfPatchesInCategoryAndChildren;
 };
 
-enum sub3_copysource
+enum surge_copysource
 {
    cp_off = 0,
    cp_scene,
@@ -514,6 +913,7 @@ class alignas(16) SurgeStorage
 public:
    float audio_in alignas(16)[2][BLOCK_SIZE_OS];
    float audio_in_nonOS alignas(16)[2][BLOCK_SIZE];
+   float audio_otherscene alignas(16)[2][BLOCK_SIZE_OS]; // this will be a pointer to an aligned 2 x BLOCK_SIZE_OS array
    //	float sincoffset alignas(16)[(FIRipol_M)*FIRipol_N];	// deprecated
 
 
@@ -521,6 +921,9 @@ public:
    float table_pitch alignas(16)[512];
    float table_pitch_inv alignas(16)[512];
    float table_note_omega alignas(16)[2][512];
+   float table_pitch_ignoring_tuning alignas(16)[512];
+   float table_pitch_inv_ignoring_tuning alignas(16)[512];
+   float table_note_omega_ignoring_tuning alignas(16)[2][512];
 
    ~SurgeStorage();
 
@@ -535,13 +938,13 @@ public:
    double songpos;
    void init_tables();
    float nyquist_pitch;
-   int last_key[2];
+   int last_key[2]; // TODO: FIX SCENE ASSUMPTION?
    TiXmlElement* getSnapshotSection(const char* name);
    void load_midi_controllers();
    void save_midi_controllers();
    void save_snapshots();
    int controllers[n_customcontrollers];
-   float poly_aftertouch[2][128];
+   float poly_aftertouch[2][128];  // TODO: FIX SCENE ASSUMPTION?
    float modsource_vu[n_modsources];
    void refresh_wtlist();
    void refresh_wtlistAddDir(bool userDir, std::string subdir);
@@ -556,8 +959,8 @@ public:
 
    void perform_queued_wtloads();
 
-   void load_wt(int id, Wavetable* wt);
-   void load_wt(std::string filename, Wavetable* wt);
+   void load_wt(int id, Wavetable* wt, OscillatorStorage *);
+   void load_wt(std::string filename, Wavetable* wt, OscillatorStorage *);
    bool load_wt_wt(std::string filename, Wavetable* wt);
    // void load_wt_wav(std::string filename, Wavetable* wt);
    void load_wt_wav_portable(std::string filename, Wavetable *wt);
@@ -588,14 +991,23 @@ public:
    std::string datapath;
    std::string userDataPath;
    std::string userDefaultFilePath;
-   
-   std::string defaultsig, defaultname;
+   std::string userFXPath;
+
+   std::string userMidiMappingsPath;
+   std::map<std::string, TiXmlDocument> userMidiMappingsXMLByName;
+   void rescanUserMidiMappings();
+   void loadMidiMappingByName( std::string name );
+   void storeMidiMappingToName( std::string name );
+
    // float table_sin[512],table_sin_offset[512];
-   Surge::CriticalSection CS_WaveTableData, CS_ModRouting;
+   std::mutex waveTableDataMutex;
+   std::recursive_mutex modRoutingMutex;
    Wavetable WindowWT;
 
    float note_to_pitch(float x);
    float note_to_pitch_inv(float x);
+   float note_to_pitch_ignoring_tuning(float x);
+   float note_to_pitch_inv_ignoring_tuning(float x);
    inline float note_to_pitch_tuningctr(float x)
    {
        return note_to_pitch(x + scaleConstantNote() ) * scaleConstantPitchInv();
@@ -604,22 +1016,45 @@ public:
    {
        return note_to_pitch_inv( x + scaleConstantNote() ) * scaleConstantPitch();
    }
-       
+
    void note_to_omega(float, float&, float&);
+   void note_to_omega_ignoring_tuning(float, float&, float&);
 
-   bool retuneToScale(const Surge::Storage::Scale& s);
-   inline int scaleConstantNote() { return 48; }
-   inline float scaleConstantPitch() { return 16.0; }
-   inline float scaleConstantPitchInv() { return 0.0625; } // Obviously that's the inverse of the above
+   bool retuneToScale(const Tunings::Scale& s);
+   bool retuneToStandardTuning() { init_tables(); return true; }
 
-   Surge::Storage::Scale currentScale;
+   bool remapToKeyboard(const Tunings::KeyboardMapping &k);
+   bool remapToStandardKeyboard();
+   inline int scaleConstantNote() { return currentMapping.tuningConstantNote; }
+   inline float scaleConstantPitch() { return tuningPitch; }
+   inline float scaleConstantPitchInv() { return tuningPitchInv; } // Obviously that's the inverse of the above
+
+   Tunings::Scale currentScale;
    bool isStandardTuning;
-   
+
+   Tunings::KeyboardMapping currentMapping;
+   bool isStandardMapping = true;
+   float tuningPitch = 32.0f, tuningPitchInv = 0.03125f;
+
+   ControllerModulationSource::SmoothingMode smoothingMode = ControllerModulationSource::SmoothingMode::LEGACY;
+   ControllerModulationSource::SmoothingMode pitchSmoothingMode =
+       ControllerModulationSource::SmoothingMode::LEGACY;
+   float mpePitchBendRange = -1.0f;
+
+   std::atomic<int> otherscene_clients;
+
+   std::unordered_map<int, std::string> helpURL_controlgroup;
+   std::unordered_map<std::string, std::string> helpURL_paramidentifier;
+   std::unordered_map<std::string, std::string> helpURL_specials;
+   // Alterhately make this unordered and provide a hash
+   std::map<std::pair<std::string,int>, std::string> helpURL_paramidentifier_typespecialized;
+
 private:
    TiXmlDocument snapshotloader;
    std::vector<Parameter> clipboard_p;
    int clipboard_type;
    StepSequencerStorage clipboard_stepsequences[n_lfos];
+   MSEGStorage clipboard_msegs[n_lfos];
    std::vector<ModulationRouting> clipboard_modulation_scene, clipboard_modulation_voice;
    Wavetable clipboard_wt[n_oscs];
 
@@ -635,21 +1070,24 @@ float lookup_waveshape(int, float);
 float lookup_waveshape_warp(int, float);
 float envelope_rate_lpf(float);
 float envelope_rate_linear(float);
+float envelope_rate_linear_nowrap(float);
+float glide_log(float);
+float glide_exp(float);
 
 namespace Surge
 {
 namespace Storage
 {
 bool isValidName(const std::string &name);
+// is this really not in stdlib?
+bool isValidUTF8( const std::string &testThis);
 
-#if WINDOWS
-/*
-** Windows filesystem names are properly wstrings which, if we want them to
-** display properly in vstgui, need to be converted to UTF8 using the
-** windows widechar API. Linux and Mac do not require this.
-*/
-std::string wstringToUTF8(const std::wstring &ws);
-#endif
+std::string findReplaceSubstring(std::string &source, const std::string &from, const std::string &to);
+std::string makeStringVertical(std::string &source);
+
+std::string appendDirectory( const std::string &root, const std::string &path1 );
+std::string appendDirectory( const std::string &root, const std::string &path1, const std::string &path2 );
+std::string appendDirectory( const std::string &root, const std::string &path1, const std::string &path2, const std::string &path3 );
 }
 }
 

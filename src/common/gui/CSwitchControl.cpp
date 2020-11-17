@@ -30,6 +30,27 @@ void CSwitchControl::draw(CDrawContext* dc)
          CPoint where(0, (down ? heightOfSingleImage : 0));
          pBackground->draw(dc, size, where, 0xff);
       }
+
+      if( ! lookedForHover && skin.get() )
+      {
+         lookedForHover = true;
+         hoverBmp = skin->hoverBitmapOverlayForBackgroundBitmap( skinControl, dynamic_cast<CScalableBitmap*>( getBackground() ), associatedBitmapStore, Surge::UI::Skin::HoverType::HOVER );
+      }
+
+      if( hoverBmp && doingHover )
+      {
+         if (is_itype)
+         {
+            CPoint where(0, size.getHeight() * ivalue);
+            hoverBmp->draw(dc, size, where, 0xff);
+         }
+         else
+         {
+            CPoint where(0, (down ? heightOfSingleImage : 0));
+            hoverBmp->draw(dc, size, where, 0xff);
+         }
+
+      }
    }
    setDirty(false);
 }
@@ -42,7 +63,13 @@ void CSwitchControl::setValue(float f)
 
 CMouseEventResult CSwitchControl::onMouseDown(CPoint& where, const CButtonState& buttons)
 {
-   if (listener && buttons & (kAlt | kShift | kControl | kApple))
+   if (listener && (buttons & (kMButton | kButton4 | kButton5)))
+   {
+      listener->controlModifierClicked(this, buttons);
+      return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
+   }
+
+   if (listener && ( buttons & (kAlt | kShift | kControl | kApple) || unValueClickable ))
    {
       if (listener->controlModifierClicked(this, buttons) != 0)
          return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
@@ -50,6 +77,9 @@ CMouseEventResult CSwitchControl::onMouseDown(CPoint& where, const CButtonState&
 
    if (!(buttons & kLButton))
       return kMouseEventNotHandled;
+
+   if( unValueClickable )
+      return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
 
    beginEdit();
 

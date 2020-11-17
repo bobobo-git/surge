@@ -1,3 +1,5 @@
+#pragma once
+
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ generated include file.
 // Used by surge.rc
@@ -5,11 +7,11 @@
 #define IDB_BG 102
 #define IDB_FADERV_BG 105
 #define IDD_EVALUE 107
-#define IDB_FILTERBUTTONS 108
 #define IDB_OSCSWITCH 110
 #define IDB_FBCONFIG 112
 #define IDB_SCENESWITCH 113
 #define IDB_SCENEMODE 114
+#define IDB_OCTAVES_OSC 117
 #define IDB_OCTAVES 118
 #define IDB_OSCMENU 119
 #define IDB_WAVESHAPER 120
@@ -25,7 +27,6 @@
 #define IDB_SWITCH_SOLO 132
 #define IDB_SWITCH_FM 133
 #define IDB_SWITCH_MUTE 134
-#define IDB_CONF 135
 #define IDB_FXCONF_SYMBOLS 136
 #define IDB_FXCONF 137
 #define IDB_SWITCH_TEMPOSYNC 140
@@ -44,21 +45,48 @@
 #define IDB_FADERH_HANDLE 153
 #define IDB_FADERH_BG 154
 #define IDB_FADERV_HANDLE 157
-#define IDB_ABOUT 158
-#define IDB_BUTTON_ABOUT 159
 #define IDB_FILTERSUBTYPE 160
 #define IDI_ICON1 164
 #define IDI_SURGE 164
 #define IDR_PNG1 165
 #define IDB_CHARACTER 161
 #define IDB_ENVMODE 162
-#define IDB_STOREPATCH 163
-#define IDB_BUTTON_MENU 164 
+#define IDB_BUTTON_MENU 164
+#define IDB_LFOTYPE 166
+#define IDB_MENU_IN_SLIDER_BG 167
+#define IDB_MENU_IN_FILTER_BG 168
+#define IDB_FILTER_GLYPHS 169
+
+// == SVG == Do not remove this comment - it indicates the start of the automated SVG adding block
+#define IDB_MSEG_SEGMENT_HANDLES 301
+#define IDB_MSEG_MOVEMENT 302
+#define IDB_MINIEDIT_ICON 170
+#define IDB_MSEG_VERTICAL_SNAP 303
+#define IDB_MSEG_HORIZONTAL_SNAP 304
+#define IDB_MPE_BUTTON 171
+#define IDB_ZOOM_BUTTON 172
+#define IDB_TUNE_BUTTON 173
+#define IDB_POLYSPLIT_NUM_BG 174
+#define IDB_PITCHBEND_NUM_BG 175
+#define IDB_KEYTRACKROOT_BG 176
+#define IDB_MSEG_LOOP_MODES 305
+#define IDB_LFO_MSEG_EDIT 177
+#define IDB_LFO_PRESETS 178
+#define IDB_MSEG_NUMBERFIELDBG 306
+#define IDB_MODSRC_SHOW_LFO 179
+#define IDB_MSEG_EDIT_MODE 307
+#define IDB_ABOUT_LOGOS 180
+#define IDB_ABOUT 158
+// == /SVG == Do not remove this comment
+
+
 #define IDC_NAME 1001
 #define IDC_CATEGORY 1002
 #define IDC_DESCRIPTION 1003
 #define IDC_AUTHOR 1004
 #define IDC_TEDIT 1024
+#define IDC_TPROMPT 1025
+
 
 #define IDR_LATO_FONT 501
 
@@ -74,20 +102,6 @@
 #endif
 
 #if WINDOWS
-/*
-** Each of the bitmaps is also available in scaled form. The ID of the scaled bitmaps
-** is ID_BG+SCALABLE_200_OFFSET for the 200% image.
-**
-** Do NOT change the values of these constants without understanding scripts/win/emit-vector-rc.py
-**
-** This is windows only. Mac and Linux use different resource approaches
-*/
-#define SCALABLE_100_OFFSET 70000
-#define SCALABLE_125_OFFSET 71000
-#define SCALABLE_150_OFFSET 72000
-#define SCALABLE_200_OFFSET 73000
-#define SCALABLE_300_OFFSET 74000
-#define SCALABLE_400_OFFSET 75000
 #define SCALABLE_SVG_OFFSET 80000
 
 #include "scalableresource.h" // found in src/windows

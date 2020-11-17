@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="48px" height="281px" viewbox="0 0 48 281" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <path d="M0 0L48 0L48 281L0 281L0 0Z" id="path_1" />
+    <rect width="48" height="281" id="artboard_1" />
+    <clipPath id="clip_1">
+      <use xlink:href="#artboard_1" clip-rule="evenodd" />
+    </clipPath>
+    <clipPath id="mask_1">
+      <use xlink:href="#path_1" />
+    </clipPath>
+  </defs>
+  <g id="bmp00105" clip-path="url(#clip_1)">
+    <path d="M0 0L48 0L48 281L0 281L0 0Z" id="Background" fill="none" fill-rule="evenodd" stroke="none" />
+    <g clip-path="url(#mask_1)">
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 273)" id="Shape" fill="#000000" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 234)" id="Shape" fill="#000000" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(8.5 225)" id="Shape" fill="none" fill-rule="evenodd" stroke="#000000" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(9.5 235)" id="Shape" fill="#98999B" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 273)" id="Shape" fill="#2B3E80" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 234)" id="Shape" fill="#2B3E80" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(24.5 225)" id="Shape" fill="none" fill-rule="evenodd" stroke="#2B3E80" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(25.5 235)" id="Shape" fill="#7B8ECE" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 273)" id="Shape" fill="#1437B8" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 234)" id="Shape" fill="#1437B8" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(40.5 225)" id="Shape" fill="none" fill-rule="evenodd" stroke="#1437B8" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(41.5 235)" id="Shape" fill="#3C8DFC" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 198)" id="Shape" fill="#000000" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 159)" id="Shape" fill="#000000" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(8.5 150)" id="Shape" fill="none" fill-rule="evenodd" stroke="#000000" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(9.5 160)" id="Shape" fill="#98999B" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 198)" id="Shape" fill="#2B3E80" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 159)" id="Shape" fill="#2B3E80" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(24.5 150)" id="Shape" fill="none" fill-rule="evenodd" stroke="#2B3E80" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(25.5 160)" id="Shape" fill="#7B8ECE" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 198)" id="Shape" fill="#1437B8" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 159)" id="Shape" fill="#1437B8" fill-rule="evenodd" stroke="none" />
+      <path d="M0 56L0 0" transform="translate(40.5 150)" id="Shape" fill="none" fill-rule="evenodd" stroke="#1437B8" stroke-width="2" />
+      <path d="M0 36L0 0L6 0L0 36L0 36Z" transform="translate(41.5 160)" id="Shape" fill="#3C8DFC" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 65)" id="Shape" fill="#F5F5F6" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 9)" id="Shape" fill="#F5F5F6" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(8.5 0)" id="Shape" fill="none" fill-rule="evenodd" stroke="#F5F5F6" stroke-width="2" />
+      <path d="M0 55L0 0L6 0L0 55L0 55Z" transform="translate(9.5 10)" id="Shape" fill="#B6B6BA" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 65)" id="Shape" fill="#9DAADD" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 9)" id="Shape" fill="#9DAADD" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(24.5 0)" id="Shape" fill="none" fill-rule="evenodd" stroke="#9DAADD" stroke-width="2" />
+      <path d="M0 55L0 0L6 0L0 55L0 55Z" transform="translate(25.5 10)" id="Shape" fill="#A5ABC2" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 65)" id="Shape" fill="#74AEFE" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 9)" id="Shape" fill="#74AEFE" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(40.5 0)" id="Shape" fill="none" fill-rule="evenodd" stroke="#74AEFE" stroke-width="2" />
+      <path d="M0 55L0 0L6 0L0 55L0 55Z" transform="translate(41.5 10)" id="Shape" fill="#2E86FE" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 140)" id="Shape" fill="#F5F5F6" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(1.5 84)" id="Shape" fill="#F5F5F6" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(8.5 75)" id="Shape" fill="none" fill-rule="evenodd" stroke="#F5F5F6" stroke-width="2" />
+      <path d="M0 30.225L0 0L6 0L0 30.225L0 30.225Z" transform="translate(9.5 85)" id="Shape" fill="#B6B6BA" fill-rule="evenodd" stroke="none" />
+      <path d="M6 0L5.99999 30.225L0 30.225L6 0L6 0Z" transform="translate(1.5 109.774994)" id="Shape" fill="#B6B6BA" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 140)" id="Shape" fill="#9DAADD" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(17.5 84)" id="Shape" fill="#9DAADD" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(24.5 75)" id="Shape" fill="none" fill-rule="evenodd" stroke="#9DAADD" stroke-width="2" />
+      <path d="M0 30.225L0 0L6 0L0 30.225L0 30.225Z" transform="translate(25.5 85)" id="Shape" fill="#A5ABC2" fill-rule="evenodd" stroke="none" />
+      <path d="M6 0L6 30.225L0 30.225L6 0L6 0Z" transform="translate(17.5 109.774994)" id="Shape" fill="#A5ABC2" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 140)" id="Shape" fill="#74AEFE" fill-rule="evenodd" stroke="none" />
+      <path d="M14 0L14 1L0 1L0 0L14 0L14 0Z" transform="translate(33.5 84)" id="Shape" fill="#74AEFE" fill-rule="evenodd" stroke="none" />
+      <path d="M0 73L0 0" transform="translate(40.5 75)" id="Shape" fill="none" fill-rule="evenodd" stroke="#74AEFE" stroke-width="2" />
+      <path d="M0 30.225L0 0L6 0L0 30.225L0 30.225Z" transform="translate(41.5 85)" id="Shape" fill="#2E86FE" fill-rule="evenodd" stroke="none" />
+      <path d="M6 0L6 30.225L0 30.225L6 0L6 0Z" transform="translate(33.5 109.774994)" id="Shape" fill="#2E86FE" fill-rule="evenodd" stroke="none" />
+      <path d="M8 0L8 1L0 1L0 0L8 0L8 0Z" transform="translate(4.5 112)" id="Shape" fill="#F5F5F6" fill-rule="evenodd" stroke="none" />
+      <path d="M8 0L8 1L0 1L0 0L8 0L8 0Z" transform="translate(20.5 112)" id="Shape-Copy" fill="#9DAADD" fill-rule="evenodd" stroke="none" />
+      <path d="M8 0L8 1L0 1L0 0L8 0L8 0Z" transform="translate(36.5 112)" id="Shape-Copy-2" fill="#74AEFE" fill-rule="evenodd" stroke="none" />
+    </g>
+  </g>
+</svg>
